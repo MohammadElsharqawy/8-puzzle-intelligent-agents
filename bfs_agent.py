@@ -1,11 +1,10 @@
 from collections import deque
-from typing import Callable, List, Tuple, Set, Dict, Any
 from puzzle8_game import Puzzle8
 
 
 def bfs(initial_state, get_actions, get_state, is_goal):
-    fringe: deque[Dict[str, Any]] = deque()
-    visited: Set[Tuple[int, ...]] = set()
+    fringe = deque()
+    visited = set()
 
     initial_node = {
         'state': tuple(initial_state),
