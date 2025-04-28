@@ -1,89 +1,196 @@
-# A\* Search Algorithm for Puzzle 8
+# Internal web dashboard (hosted on internal.example.com) is suddenly unreachable from multiple systems
 
-This project implements various search algorithms for solving the Puzzle 8 problem. It includes utilities for handling search algorithms, heuristics, and puzzle state management.
+users are experiencing `host not found` issue
 
-## Overview
+## Steps
 
-The goal of this project is to solve the Puzzle 8 problem using different search strategies, including **Breadth-First Search (BFS)**, **Depth-First Search (DFS)**, **Uniform Cost Search (UCS)**, **Greedy Search**, and **A\* Search**.
+1. Compare the resolution from /etc/resolv.conf DNS vs. 8.8.8.8.
 
-### Puzzle 8
+   ```bash
+   dig internal.example.com
+   ```
 
-The Puzzle 8 consists of a 3x3 grid with 8 numbered tiles (1-8) and one empty space. The tiles can be moved to the empty space, and the goal is to arrange the tiles in numerical order using the least number of moves.
+   and
 
-### Algorithms Implemented
+   ```bash
+   dig @8.8.8.8 internal.example.com
+   ```
 
-1. **Breadth-First Search (BFS)**
+Since it is a private (internal) service, it should be hosted on internal DNS, however Google DNS is a public DNS, though it is technically feasible.
 
-   - Explores all nodes at the current depth before moving to the next level. Guarantees the shortest path (in moves) but is memory-intensive.
+### Findings
 
-2. **Depth-First Search (DFS)**
+1.  if both return the same IP address, DNS resolution is functioning properly
+2.  if they differ, we need to confirm that the DNS is the problem, so we will
+        curl the server with its IP and put the `host field: internal.example.com`, if it is working properly, it is a DNS issue.
+    possible causes   
+       1. Maybe etc/resolv.conf is not configured properly
+       2. Local DNS override (/etc/hosts)
+          ```
+          grep "internal.example.com" /etc/hosts
+          ```
+          and the check the IP
+       3. Local DNS cache update issue, we should flush the cash.
+   
+          common linux distros
+   
+          ```
+          sudo systemd-resolve --flush-caches
+          sudo systemctl restart systemd-resolved
+          ```
+   
+          MACOS
+   
+          ```
+          sudo dscacheutil -flushcache
+          sudo killall -HUP mDNSResponder
+          ```
 
-   - Explores as far as possible along each branch before backtracking. Not optimal (may find a longer path) but uses less memory than BFS.
+3.  Diagnose Service Reachability:
 
-3. **Uniform Cost Search (UCS)**
+    1.  Test Network Connectivity
+        First, check if the server is reachable at the network level:
 
-   - Finds the least-cost path to the goal without using any heuristic. Guarantees the optimal solution if the cost function is non-negative.
+        ```
+        traceroute <resolved-ip-address>
+        ```
 
-4. **Greedy Search**
+        If traceroute reached the destination, it is not a network issue.
+        If traceroute fails, Report to the netwoek team
 
-   - Uses a heuristic to estimate the distance to the goal and expands the node with the least estimated cost. May not find the optimal solution but is often faster than UCS.
+    2. Check if the machine (server) is up
 
-5. **A\* Search**
-   - Combines UCS and Greedy Search. Uses both the cost to reach a node and a heuristic to estimate the distance to the goal. Guarantees the optimal solution if the heuristic is admissible.
+        ```
+        ping <server-ip-or-hostname> 
+        ```
+        If ping fails, the machine need to be up.  
 
-### Heuristics Implemented
+    3.  Test Port Connectivity
+        use `telnet` or `nc` to check if web services are open:
 
-- **h1**: Misplaced tiles heuristic. The cost is the number of tiles not in their goal position.
-- **h2**: Manhattan distance heuristic. The cost is the sum of the absolute differences between the current and goal positions for each tile.
+        ```
+        telnet <resolved-ip-address> 80
+        telnet <resolved-ip-address> 443
+        ```
 
-## Usage
+        netcat
 
-Clone the repository and navigate to the project directory.
+        ```
+        nc -zv <resolved-ip-address> 80
+        nc -zv <resolved-ip-address> 443
+        ```
 
-```bash
-git clone https://github.com/yourusername/puzzle8-search.git
-cd puzzle8-search
-```
+        If connection succeeds, the post is open.
+        If connection fails, the port might be firewall blocking check the Security team.
+       
+         
+    5. Check is the service is up, assuming the service is nginx
 
-## Running the Puzzle Solver
+       ```
+       systemctl status nginx  
+       ```  
+       if it is not running, start it.  
+       
+    6.  Verify Local Listening (If You Have Server Access)
+        If we can log into the server, check whether the web service (e.g., nginx, apache) is listening on the expected ports:
 
-To run the solver with different algorithms, use the following commands:
+        using `ss` or `netstat`
 
-```# A* Search (default: Manhattan distance heuristic)
-python astar.py
+        ```
+        sudo netstat -tulnp | grep -E ':80|:443'
+        ```
 
-# Uniform Cost Search (UCS)
-python ucs.py
+        or
 
-# Breadth-First Search (BFS)
-python bfs.py
+        ```
+        sudo ss  -tulnp | grep -E ':80|:443'
+        ```
 
-# Depth-First Search (DFS)
-python dfs.py
-```
+        Confirm there is a process actively listening on port 80 and/or 443.
 
-## Changing Heuristics
 
-You can change the heuristic used in A\* by passing either `h1` or `h2` to the astar function in the `main()` function
+    7.  Check Service Logs
+        If you have access to the server, inspect the web service logs to find internal errors:
+        apache
 
-```# Choose heuristic h1 or h2
-result = astar(
-    initial_state=puzzle.initial_state,
-    get_actions=puzzle.get_actions,
-    get_state=puzzle.apply_action,
-    is_goal=puzzle.is_goal,
-    heuristic=h1  # or h2 depending on your choice
-)
-```
+        ```
+        sudo tail -n 50 /var/log/apache2/error.log
+        ```
 
-## Folder Structure
+        nginx
 
-```puzzle8-search/
-│
-├── astar.py                # A* Search algorithm
-├── ucs.py                  # UCS algorithm
-├── greedy.py               # Greedy Search algorithm
-├── puzzle8_game.py         # Puzzle 8 game logic
-├── utilities.py            # Helper functions (get_min, compute_cost)
-└── README.md               # This file
-```
+        ```
+        sudo tail -n 50 /var/log/nginx/error.log
+        ```
+
+        system-managed
+
+        ```bash
+        sudo journalctl -u nginx
+        sudo journalctl -u apache2
+        ```
+    5. If logs indicate any abnormal behavior, Report to the Development team, if not 
+        Maybe it is Service crashes, Misconfiguration errors or Resource exhaustion (CPU throttling, out of memory, disk full).
+
+    6.  Check for Abnormal Process Behaviour
+        If service logs hint at instability or resource problems, inspect the running process:
+        Trace system calls:
+
+        ```bash
+            sudo strace -p <pid>
+        ```
+
+        Watch for infinite system calls (e.g., open, write loops).
+
+        List open files:
+
+        ```bash
+        sudo lsof -p <pid>
+        ```
+
+        Detect heavy or infinite file writes.
+        Monitor resource usage:
+
+        ```bash
+        top
+        htop
+        ```
+
+        If you observe infinite writing, massive CPU spikes, or abnormal behaviour:
+
+        ```bash
+        sudo kill -9 <pid>
+        ```
+
+        Then I'll report immediately to the developer with my findings.
+        or fix it myself if it’s a simple and authorised change (e.g., remove bad file, fix config).
+
+## Bonus
+
+## **Configure a Local /etc/hosts Entry**
+
+1. vim into /etc/hosts to directly map internal.example.com to the resolved IP address, bypassing DNS.
+
+   ```
+   sudo vim /etc/hosts
+   # Add the following entry:
+   resolved_ip_address internal.example.com
+   ```
+
+   Now your system will bypass DNS resolution and directly use the IP address from /etc/hosts.
+
+2. Persist DNS Settings: For systemd-resolved:
+
+   ```
+   sudo nano /etc/systemd/resolved.conf
+   ```
+
+   ```
+   # Set DNS server:
+   DNS=8.8.8.8
+   FallbackDNS=8.8.4.4
+   ```
+
+   ```
+   sudo systemctl restart systemd-resolved
+   ```
